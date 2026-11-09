@@ -1,0 +1,6 @@
+{
+  "name": "Estética Automotiva do Cremozinho",
+  "description": "Catálogo cinematográfico de serviços e tabela de preços da Estética Automotiva do Cremozinho em Ribeirão Cascalheira - MT.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
