@@ -14,20 +14,50 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   onPlayingChange,
 }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [hasStarted, setHasStarted] = useState<boolean>(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const hasStartedRef = useRef<boolean>(false);
+  const [, setRerender] = useState({});
 
-  const startAudio = useCallback(async () => {
-    if (!audioRef.current || hasStarted) return;
+  // Synchronous play helper to comply with Android Chrome & iOS Safari transient user gesture rules
+  const playAudioSync = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio || hasStartedRef.current) return;
+
+    // Unlock Web Audio Context if available (vital for Android Chrome)
     try {
-      audioRef.current.muted = isMuted;
-      await audioRef.current.play();
-      setHasStarted(true);
-      if (onPlayingChange) onPlayingChange(true);
+      if (!audioContextRef.current) {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (AudioCtx) {
+          audioContextRef.current = new AudioCtx();
+        }
+      }
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume();
+      }
     } catch {
-      // Autoplay with audio was restricted by browser policy;
-      // It will play on the very first touch/scroll/click.
+      // AudioContext optional fallback
     }
-  }, [hasStarted, isMuted, onPlayingChange]);
+
+    try {
+      audio.muted = isMuted;
+      audio.currentTime = 0;
+      const playPromise = audio.play();
+
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            hasStartedRef.current = true;
+            if (onPlayingChange) onPlayingChange(true);
+            setRerender({});
+          })
+          .catch(() => {
+            // Browser blocked this attempt; listeners will trigger on gesture
+          });
+      }
+    } catch {
+      // Catch synchronous errors if any
+    }
+  }, [isMuted, onPlayingChange]);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -37,9 +67,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
   useEffect(() => {
     if (onRegisterPlayTrigger) {
-      onRegisterPlayTrigger(startAudio);
+      onRegisterPlayTrigger(playAudioSync);
     }
-  }, [onRegisterPlayTrigger, startAudio]);
+  }, [onRegisterPlayTrigger, playAudioSync]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -47,25 +77,65 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
     audio.loop = false;
 
-    // 1. Try immediate autoplay on page load
-    const timer = setTimeout(() => {
-      startAudio();
-    }, 150);
+    // 1. Attempt immediate autoplay as soon as component mounts
+    playAudioSync();
 
-    // 2. Global transparent gesture trigger for mobile / strict browsers
-    const handleFirstGesture = () => {
-      startAudio();
-      // Remove listeners once triggered
-      window.removeEventListener('click', handleFirstGesture);
-      window.removeEventListener('touchstart', handleFirstGesture);
-      window.removeEventListener('scroll', handleFirstGesture);
-      window.removeEventListener('pointerdown', handleFirstGesture);
+    // 2. Also attempt as soon as audio data can play
+    const handleCanPlay = () => {
+      if (!hasStartedRef.current) {
+        playAudioSync();
+      }
+    };
+    audio.addEventListener('canplay', handleCanPlay, { once: true });
+
+    // 3. Universal gesture unlock for Android & iOS
+    // Android Chrome requires capture-phase listeners on document/window to detect touch/scroll gestures
+    const gestureEvents = [
+      'touchstart',
+      'touchend',
+      'touchmove',
+      'pointerdown',
+      'pointerup',
+      'pointermove',
+      'mousedown',
+      'mouseup',
+      'click',
+      'scroll',
+      'wheel',
+      'keydown'
+    ] as const;
+
+    const handleUniversalGesture = () => {
+      if (!hasStartedRef.current) {
+        playAudioSync();
+      }
+      // If successfully started or triggered, remove event listeners
+      if (hasStartedRef.current) {
+        removeGestureListeners();
+      }
     };
 
-    window.addEventListener('click', handleFirstGesture, { passive: true });
-    window.addEventListener('touchstart', handleFirstGesture, { passive: true });
-    window.addEventListener('scroll', handleFirstGesture, { passive: true });
-    window.addEventListener('pointerdown', handleFirstGesture, { passive: true });
+    const addGestureListeners = () => {
+      gestureEvents.forEach((ev) => {
+        window.addEventListener(ev, handleUniversalGesture, { capture: true, passive: true });
+        document.addEventListener(ev, handleUniversalGesture, { capture: true, passive: true });
+        if (document.body) {
+          document.body.addEventListener(ev, handleUniversalGesture, { capture: true, passive: true });
+        }
+      });
+    };
+
+    const removeGestureListeners = () => {
+      gestureEvents.forEach((ev) => {
+        window.removeEventListener(ev, handleUniversalGesture, { capture: true });
+        document.removeEventListener(ev, handleUniversalGesture, { capture: true });
+        if (document.body) {
+          document.body.removeEventListener(ev, handleUniversalGesture, { capture: true });
+        }
+      });
+    };
+
+    addGestureListeners();
 
     const handleEnded = () => {
       if (onPlayingChange) onPlayingChange(false);
@@ -74,14 +144,11 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     audio.addEventListener('ended', handleEnded);
 
     return () => {
-      clearTimeout(timer);
-      window.removeEventListener('click', handleFirstGesture);
-      window.removeEventListener('touchstart', handleFirstGesture);
-      window.removeEventListener('scroll', handleFirstGesture);
-      window.removeEventListener('pointerdown', handleFirstGesture);
+      removeGestureListeners();
+      audio.removeEventListener('canplay', handleCanPlay);
       audio.removeEventListener('ended', handleEnded);
     };
-  }, [startAudio, onPlayingChange]);
+  }, [playAudioSync, onPlayingChange]);
 
   return (
     <audio
