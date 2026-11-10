@@ -11,7 +11,7 @@ export const COMPANY_CONFIG = {
   tableTitle: 'TABELA DE SERVIÇOS & VALORES',
   footerQuote: 'Cuidado em cada detalhe.',
   cityState: 'Ribeirão Cascalheira — MT',
-  logoUrl: 'https://i.postimg.cc/tgF29FSQ/FA1537B2-B399-46C7-84E9-C3EEE1BE9454.png',
+  logoUrl: '/images/logo.png',
   address: {
     street: 'Rua Pará, nº 175',
     neighborhood: "Bairro Caixa D'Água",
